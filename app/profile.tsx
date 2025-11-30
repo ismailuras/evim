@@ -1,5 +1,6 @@
 /**
- * ProfileScreen - User profile with subscription
+ * ProfileScreen - Kullanıcı profili
+ * Bulut API + yerel ayarlar
  */
 
 import React, { useState } from 'react';
@@ -10,8 +11,8 @@ import {
   ScrollView,
   StatusBar,
   Pressable,
-  Image,
   Switch,
+  ActivityIndicator,
 } from 'react-native';
 import Animated, {
   FadeIn,
@@ -20,9 +21,12 @@ import Animated, {
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import Toast from 'react-native-toast-message';
 import { Colors, Spacing, Typography, BorderRadius } from '@/constants/Colors';
 import { useTheme } from '@/hooks/useTheme';
 import { Button, Card } from '@/components/ui';
+import { useAuth, useUser, useLogout } from '@/src/hooks/useAuth';
+import { useAllDevices } from '@/src/hooks/useDevices';
 
 interface SettingItem {
   id: string;
@@ -38,7 +42,7 @@ const settingsData: SettingItem[] = [
     id: '1',
     icon: 'notifications-outline',
     title: 'Bildirimler',
-    subtitle: 'AI önerileri ve cihaz uyarıları',
+    subtitle: 'TV kontrol bildirimleri',
     type: 'toggle',
     value: true,
   },
@@ -52,9 +56,9 @@ const settingsData: SettingItem[] = [
   },
   {
     id: '3',
-    icon: 'mic-outline',
-    title: 'Sesli Komutlar',
-    subtitle: 'Türkçe ses tanıma',
+    icon: 'wifi-outline',
+    title: 'Ağ Ayarları',
+    subtitle: 'Yerel TV keşif ayarları',
     type: 'navigate',
   },
   {
@@ -91,6 +95,11 @@ export default function ProfileScreen() {
   const [settings, setSettings] = useState(settingsData);
   const [isSubscribed, setIsSubscribed] = useState(false);
 
+  // Auth and user data
+  const { data: user, isLoading: userLoading } = useUser();
+  const logout = useLogout();
+  const { devices } = useAllDevices();
+
   const handleBack = () => {
     router.back();
   };
@@ -105,6 +114,25 @@ export default function ProfileScreen() {
 
   const handleSubscribe = () => {
     setIsSubscribed(true);
+    Toast.show({
+      type: 'success',
+      text1: 'Evim Plus Aktif!',
+      text2: 'Premium özellikler kullanımınıza açıldı',
+    });
+  };
+
+  const handleLogout = () => {
+    logout.mutate(undefined, {
+      onSuccess: () => {
+        router.replace('/auth');
+      },
+    });
+  };
+
+  // Get initials for avatar
+  const getInitials = (name?: string) => {
+    if (!name) return 'U';
+    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   };
 
   return (
@@ -139,9 +167,15 @@ export default function ProfileScreen() {
                 colors={[Colors.primary, Colors.accent]}
                 style={styles.avatarGradient}
               >
-                <Text style={styles.avatarText}>AY</Text>
+                {userLoading ? (
+                  <ActivityIndicator color="#FFF" />
+                ) : (
+                  <Text style={styles.avatarText}>
+                    {getInitials(user?.name)}
+                  </Text>
+                )}
               </LinearGradient>
-              {isSubscribed && (
+              {(user?.is_premium || isSubscribed) && (
                 <View style={styles.plusBadge}>
                   <Ionicons name="star" size={12} color="#FFFFFF" />
                 </View>
@@ -149,12 +183,12 @@ export default function ProfileScreen() {
             </View>
             <View style={styles.profileInfo}>
               <Text style={[styles.profileName, { color: colors.text }]}>
-                Ahmet Yılmaz
+                {user?.name || 'Kullanıcı'}
               </Text>
               <Text style={[styles.profileEmail, { color: colors.textSecondary }]}>
-                ahmet@email.com
+                {user?.email || 'email@example.com'}
               </Text>
-              {isSubscribed && (
+              {(user?.is_premium || isSubscribed) && (
                 <View style={styles.subscriptionBadge}>
                   <LinearGradient
                     colors={[Colors.accent, '#FF6B00']}
@@ -174,8 +208,43 @@ export default function ProfileScreen() {
           </View>
         </Animated.View>
 
+        {/* Stats */}
+        <Animated.View
+          entering={FadeInUp.delay(250).duration(500)}
+          style={styles.statsSection}
+        >
+          <View style={[styles.statsCard, { backgroundColor: colors.card }, shadows.small]}>
+            <View style={styles.statItem}>
+              <Text style={[styles.statValue, { color: colors.text }]}>
+                {devices.length}
+              </Text>
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                Cihaz
+              </Text>
+            </View>
+            <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
+            <View style={styles.statItem}>
+              <Text style={[styles.statValue, { color: colors.text }]}>
+                {devices.filter(d => d.connectionStatus === 'online').length}
+              </Text>
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                Çevrimiçi
+              </Text>
+            </View>
+            <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
+            <View style={styles.statItem}>
+              <Text style={[styles.statValue, { color: Colors.success }]}>
+                ✓
+              </Text>
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                Yerel Kontrol
+              </Text>
+            </View>
+          </View>
+        </Animated.View>
+
         {/* Subscription Card */}
-        {!isSubscribed && (
+        {!user?.is_premium && !isSubscribed && (
           <Animated.View
             entering={FadeInUp.delay(300).duration(500)}
             style={styles.subscriptionSection}
@@ -207,7 +276,7 @@ export default function ProfileScreen() {
                 {plusFeatures.map((feature, index) => (
                   <View key={index} style={styles.featureItem}>
                     <Ionicons
-                      name={feature.icon}
+                      name={feature.icon as any}
                       size={20}
                       color={Colors.accent}
                     />
@@ -313,10 +382,11 @@ export default function ProfileScreen() {
         >
           <Button
             title="Çıkış Yap"
-            onPress={() => router.replace('/auth')}
+            onPress={handleLogout}
             variant="secondary"
             size="large"
             fullWidth
+            loading={logout.isPending}
             icon={<Ionicons name="log-out-outline" size={20} color={Colors.error} />}
             textStyle={{ color: Colors.error }}
           />
@@ -325,7 +395,10 @@ export default function ProfileScreen() {
         {/* App Info */}
         <View style={styles.appInfo}>
           <Text style={[styles.appInfoText, { color: colors.textTertiary }]}>
-            Evim v1.0.0 • Made with ❤️ in Turkey
+            Evim v1.0.0
+          </Text>
+          <Text style={[styles.appInfoSubtext, { color: colors.textTertiary }]}>
+            🏠 Yerel TV Kontrolü - İnternet Gerekmez!
           </Text>
         </View>
       </ScrollView>
@@ -365,7 +438,7 @@ const styles = StyleSheet.create({
   },
   profileSection: {
     paddingHorizontal: Spacing.lg,
-    marginBottom: Spacing.lg,
+    marginBottom: Spacing.md,
   },
   profileCard: {
     flexDirection: 'row',
@@ -436,6 +509,32 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary + '15',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  statsSection: {
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.lg,
+  },
+  statsCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.md,
+    borderRadius: BorderRadius.lg,
+  },
+  statItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  statValue: {
+    ...Typography.titleLarge,
+    fontWeight: '700',
+  },
+  statLabel: {
+    ...Typography.labelSmall,
+    marginTop: 2,
+  },
+  statDivider: {
+    width: 1,
+    height: 32,
   },
   subscriptionSection: {
     paddingHorizontal: Spacing.lg,
@@ -538,5 +637,8 @@ const styles = StyleSheet.create({
   appInfoText: {
     ...Typography.labelSmall,
   },
+  appInfoSubtext: {
+    ...Typography.labelSmall,
+    marginTop: 4,
+  },
 });
-

@@ -1,5 +1,6 @@
 /**
  * HomeScreen - Main dashboard with room selector and TV card
+ * Yerel TV durumu + Bulut senkronizasyon
  */
 
 import React, { useState, useCallback } from 'react';
@@ -11,6 +12,7 @@ import {
   StatusBar,
   Dimensions,
   RefreshControl,
+  ActivityIndicator,
 } from 'react-native';
 import Animated, { FadeIn, FadeInUp, FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -19,36 +21,54 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Typography, BorderRadius } from '@/constants/Colors';
 import { useTheme } from '@/hooks/useTheme';
 import { Button, Card, TvCard, RoomChip, AiModal } from '@/components/ui';
+import { useAllDevices, useRooms } from '@/src/hooks/useDevices';
+import { TvDevice } from '@/src/services/tv';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-interface Room {
-  id: string;
-  name: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  deviceCount: number;
-}
-
-const rooms: Room[] = [
-  { id: '1', name: 'Salon', icon: 'tv-outline', deviceCount: 3 },
-  { id: '2', name: 'Yatak Odası', icon: 'bed-outline', deviceCount: 2 },
-  { id: '3', name: 'Mutfak', icon: 'restaurant-outline', deviceCount: 4 },
-  { id: '4', name: 'Çalışma', icon: 'desktop-outline', deviceCount: 2 },
+// Default rooms if no data from API
+const defaultRooms = [
+  { id: 0, name: 'Tümü', icon: 'home-outline', deviceCount: 0 },
+  { id: 1, name: 'Salon', icon: 'tv-outline', deviceCount: 0 },
+  { id: 2, name: 'Yatak Odası', icon: 'bed-outline', deviceCount: 0 },
+  { id: 3, name: 'Mutfak', icon: 'restaurant-outline', deviceCount: 0 },
 ];
 
 export default function HomeScreen() {
   const { colors, isDark, shadows } = useTheme();
-  const [selectedRoom, setSelectedRoom] = useState('1');
+  const [selectedRoom, setSelectedRoom] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [showAiModal, setShowAiModal] = useState(false);
 
+  // Get devices and rooms
+  const { devices, isLoading: devicesLoading, rooms: apiRooms } = useAllDevices();
+  const { data: cloudRooms = [] } = useRooms();
+
+  // Combine rooms
+  const rooms = cloudRooms.length > 0 
+    ? [{ id: 0, name: 'Tümü', icon: 'home-outline' }, ...cloudRooms.map(r => ({ ...r, icon: r.icon || 'cube-outline' }))]
+    : defaultRooms;
+
+  // Filter devices by room
+  const filteredDevices = selectedRoom === 0 
+    ? devices 
+    : devices.filter(d => d.roomId === selectedRoom);
+
+  // Get the primary TV (first one or the one in selected room)
+  const primaryTv = filteredDevices.find(d => d.brand) || devices[0];
+
   const onRefresh = useCallback(() => {
     setRefreshing(true);
+    // Data will auto-refresh via React Query
     setTimeout(() => setRefreshing(false), 1500);
   }, []);
 
-  const handleTvPress = () => {
-    router.push('/tv-remote');
+  const handleTvPress = (device?: TvDevice) => {
+    if (device) {
+      router.push({ pathname: '/tv-remote', params: { deviceId: device.id } });
+    } else {
+      router.push('/tv-remote');
+    }
   };
 
   const handleRoutinePress = () => {
@@ -85,7 +105,7 @@ export default function HomeScreen() {
         >
           <View style={styles.headerLeft}>
             <Text style={[styles.greeting, { color: colors.textSecondary }]}>
-              {getGreeting()}, Ahmet 👋
+              {getGreeting()} 👋
             </Text>
             <Text style={[styles.title, { color: colors.text }]}>Evim</Text>
           </View>
@@ -115,30 +135,62 @@ export default function HomeScreen() {
               <RoomChip
                 key={room.id}
                 name={room.name}
-                icon={room.icon}
+                icon={room.icon as any}
                 isSelected={selectedRoom === room.id}
                 onPress={() => setSelectedRoom(room.id)}
-                deviceCount={room.deviceCount}
+                deviceCount={devices.filter(d => room.id === 0 || d.roomId === room.id).length}
               />
             ))}
           </ScrollView>
         </Animated.View>
 
+        {/* Loading State */}
+        {devicesLoading && devices.length === 0 && (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={Colors.primary} />
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+              Cihazlar yükleniyor...
+            </Text>
+          </View>
+        )}
+
         {/* TV Card */}
-        <Animated.View
-          entering={FadeInUp.delay(300).duration(500)}
-          style={styles.section}
-        >
-          <TvCard
-            name="Samsung QLED 55"
-            room="Salon"
-            isOn={true}
-            currentChannel="TRT 1"
-            thumbnailUri="https://picsum.photos/400/225"
-            onPress={handleTvPress}
-            onPowerPress={() => console.log('Power toggle')}
-          />
-        </Animated.View>
+        {primaryTv ? (
+          <Animated.View
+            entering={FadeInUp.delay(300).duration(500)}
+            style={styles.section}
+          >
+            <TvCard
+              name={primaryTv.name}
+              room={primaryTv.roomName || 'Salon'}
+              isOn={primaryTv.powerState === 'on'}
+              currentChannel={primaryTv.currentChannel}
+              thumbnailUri={primaryTv.powerState === 'on' ? 'https://picsum.photos/400/225' : undefined}
+              onPress={() => handleTvPress(primaryTv)}
+              onPowerPress={() => handleTvPress(primaryTv)}
+              isOnline={primaryTv.connectionStatus === 'online'}
+            />
+          </Animated.View>
+        ) : devices.length === 0 && !devicesLoading ? (
+          <Animated.View
+            entering={FadeInUp.delay(300).duration(500)}
+            style={styles.section}
+          >
+            <Card style={styles.emptyCard} onPress={() => router.push('/add-tv')}>
+              <View style={styles.emptyContent}>
+                <View style={[styles.emptyIcon, { backgroundColor: Colors.primary + '15' }]}>
+                  <Ionicons name="tv-outline" size={40} color={Colors.primary} />
+                </View>
+                <Text style={[styles.emptyTitle, { color: colors.text }]}>
+                  TV Ekle
+                </Text>
+                <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+                  Aynı Wi-Fi ağındaki TV'nizi otomatik bulun
+                </Text>
+              </View>
+            </Card>
+          </Animated.View>
+        ) : null}
 
         {/* Quick Routine Card */}
         <Animated.View
@@ -202,9 +254,9 @@ export default function HomeScreen() {
               colors={colors}
             />
             <QuickActionButton
-              icon="mic-outline"
-              label="Sesli"
-              onPress={() => console.log('Voice')}
+              icon="game-controller-outline"
+              label="Kumanda"
+              onPress={() => handleTvPress()}
               colors={colors}
             />
             <QuickActionButton
@@ -217,53 +269,44 @@ export default function HomeScreen() {
         </Animated.View>
 
         {/* Active Devices Section */}
-        <Animated.View
-          entering={FadeInUp.delay(600).duration(500)}
-          style={styles.section}
-        >
-          <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>
-              Aktif Cihazlar
-            </Text>
-            <Button
-              title="Tümünü Gör"
-              onPress={() => router.push('/rooms')}
-              variant="ghost"
-              size="small"
-            />
-          </View>
-
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.devicesContent}
+        {devices.length > 0 && (
+          <Animated.View
+            entering={FadeInUp.delay(600).duration(500)}
+            style={styles.section}
           >
-            <DeviceCard
-              name="TV"
-              status="TRT 1"
-              icon="tv"
-              isOn={true}
-              colors={colors}
-              shadows={shadows}
-            />
-            <DeviceCard
-              name="Lamba"
-              status="%70"
-              icon="bulb"
-              isOn={true}
-              colors={colors}
-              shadows={shadows}
-            />
-            <DeviceCard
-              name="Klima"
-              status="24°C"
-              icon="snow"
-              isOn={false}
-              colors={colors}
-              shadows={shadows}
-            />
-          </ScrollView>
-        </Animated.View>
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>
+                Cihazlar ({devices.length})
+              </Text>
+              <Button
+                title="Tümünü Gör"
+                onPress={() => router.push('/rooms')}
+                variant="ghost"
+                size="small"
+              />
+            </View>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.devicesContent}
+            >
+              {devices.map((device) => (
+                <DeviceCard
+                  key={device.id}
+                  name={device.name}
+                  status={device.connectionStatus === 'online' ? (device.powerState === 'on' ? 'Açık' : 'Kapalı') : 'Çevrimdışı'}
+                  icon="tv"
+                  isOn={device.powerState === 'on'}
+                  isOnline={device.connectionStatus === 'online'}
+                  colors={colors}
+                  shadows={shadows}
+                  onPress={() => handleTvPress(device)}
+                />
+              ))}
+            </ScrollView>
+          </Animated.View>
+        )}
       </ScrollView>
 
       {/* AI Suggestion Modal */}
@@ -277,7 +320,6 @@ export default function HomeScreen() {
           label: 'Hemen Aç',
           onPress: () => {
             setShowAiModal(false);
-            // Execute routine
           },
         }}
         secondaryAction={{
@@ -322,13 +364,15 @@ interface DeviceCardProps {
   status: string;
   icon: keyof typeof Ionicons.glyphMap;
   isOn: boolean;
+  isOnline: boolean;
   colors: typeof Colors.light;
   shadows: any;
+  onPress?: () => void;
 }
 
-function DeviceCard({ name, status, icon, isOn, colors, shadows }: DeviceCardProps) {
+function DeviceCard({ name, status, icon, isOn, isOnline, colors, shadows, onPress }: DeviceCardProps) {
   return (
-    <View style={[styles.deviceCard, { backgroundColor: colors.card }, shadows.small]}>
+    <Card onPress={onPress} style={[styles.deviceCard, { backgroundColor: colors.card }, shadows.small]}>
       <View
         style={[
           styles.deviceIconContainer,
@@ -341,17 +385,19 @@ function DeviceCard({ name, status, icon, isOn, colors, shadows }: DeviceCardPro
           color={isOn ? Colors.primary : colors.textTertiary}
         />
       </View>
-      <Text style={[styles.deviceName, { color: colors.text }]}>{name}</Text>
+      <Text style={[styles.deviceName, { color: colors.text }]} numberOfLines={1}>
+        {name}
+      </Text>
       <Text style={[styles.deviceStatus, { color: colors.textSecondary }]}>
         {status}
       </Text>
       <View
         style={[
           styles.deviceIndicator,
-          { backgroundColor: isOn ? Colors.success : colors.textTertiary },
+          { backgroundColor: isOnline ? (isOn ? Colors.success : Colors.warning) : colors.textTertiary },
         ]}
       />
-    </View>
+    </Card>
   );
 }
 
@@ -394,9 +440,39 @@ const styles = StyleSheet.create({
   roomsContent: {
     paddingHorizontal: Spacing.lg,
   },
+  loadingContainer: {
+    padding: Spacing.xl,
+    alignItems: 'center',
+  },
+  loadingText: {
+    ...Typography.bodyMedium,
+    marginTop: Spacing.md,
+  },
   section: {
     paddingHorizontal: Spacing.lg,
     marginBottom: Spacing.lg,
+  },
+  emptyCard: {
+    padding: Spacing.xl,
+  },
+  emptyContent: {
+    alignItems: 'center',
+  },
+  emptyIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.md,
+  },
+  emptyTitle: {
+    ...Typography.titleMedium,
+    marginBottom: Spacing.xs,
+  },
+  emptySubtitle: {
+    ...Typography.bodySmall,
+    textAlign: 'center',
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -484,6 +560,7 @@ const styles = StyleSheet.create({
   deviceName: {
     ...Typography.labelMedium,
     marginBottom: 2,
+    textAlign: 'center',
   },
   deviceStatus: {
     ...Typography.labelSmall,

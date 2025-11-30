@@ -12,6 +12,7 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors } from '@/constants/Colors';
+import { AppProviders } from '@/src/providers/AppProviders';
 
 // Prevent splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
@@ -61,6 +62,7 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
+      <AppProviders>
       <ThemeProvider value={colorScheme === 'dark' ? CustomDarkTheme : LightTheme}>
         <Stack
           screenOptions={{
@@ -153,6 +155,7 @@ export default function RootLayout() {
 
         <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       </ThemeProvider>
+      </AppProviders>
     </GestureHandlerRootView>
   );
 }

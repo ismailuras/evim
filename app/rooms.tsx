@@ -1,5 +1,6 @@
 /**
- * RoomsDevicesScreen - All rooms and devices overview
+ * RoomsDevicesScreen - Odalar ve cihazlar
+ * Yerel + Bulut verisi birleşik görünüm
  */
 
 import React, { useState } from 'react';
@@ -11,120 +12,78 @@ import {
   StatusBar,
   Pressable,
   Dimensions,
+  ActivityIndicator,
 } from 'react-native';
 import Animated, {
   FadeIn,
   FadeInUp,
   Layout,
 } from 'react-native-reanimated';
-import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
+import Toast from 'react-native-toast-message';
 import { Colors, Spacing, Typography, BorderRadius } from '@/constants/Colors';
 import { useTheme } from '@/hooks/useTheme';
 import { RoomChip, Card } from '@/components/ui';
+import { useAllDevices, useRooms } from '@/src/hooks/useDevices';
+import { useTvControl } from '@/src/hooks/useTvControl';
+import { TvDevice } from '@/src/services/tv';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-interface Device {
-  id: string;
-  name: string;
-  type: 'tv' | 'light' | 'ac' | 'speaker' | 'camera' | 'other';
-  isOn: boolean;
-  status?: string;
-  room: string;
-}
-
-interface Room {
-  id: string;
-  name: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  devices: Device[];
-}
-
-const roomsData: Room[] = [
-  {
-    id: 'all',
-    name: 'Tümü',
-    icon: 'apps-outline',
-    devices: [],
-  },
-  {
-    id: '1',
-    name: 'Salon',
-    icon: 'tv-outline',
-    devices: [
-      { id: '1', name: 'Samsung TV', type: 'tv', isOn: true, status: 'TRT 1', room: 'Salon' },
-      { id: '2', name: 'Ana Lamba', type: 'light', isOn: true, status: '%70', room: 'Salon' },
-      { id: '3', name: 'Soundbar', type: 'speaker', isOn: false, room: 'Salon' },
-    ],
-  },
-  {
-    id: '2',
-    name: 'Yatak Odası',
-    icon: 'bed-outline',
-    devices: [
-      { id: '4', name: 'Yatak Odası TV', type: 'tv', isOn: false, room: 'Yatak Odası' },
-      { id: '5', name: 'Gece Lambası', type: 'light', isOn: true, status: '%30', room: 'Yatak Odası' },
-    ],
-  },
-  {
-    id: '3',
-    name: 'Mutfak',
-    icon: 'restaurant-outline',
-    devices: [
-      { id: '6', name: 'Tavan Lambası', type: 'light', isOn: true, status: '%100', room: 'Mutfak' },
-      { id: '7', name: 'Güvenlik Kamerası', type: 'camera', isOn: true, room: 'Mutfak' },
-    ],
-  },
-  {
-    id: '4',
-    name: 'Çalışma Odası',
-    icon: 'desktop-outline',
-    devices: [
-      { id: '8', name: 'Masa Lambası', type: 'light', isOn: false, room: 'Çalışma Odası' },
-      { id: '9', name: 'Klima', type: 'ac', isOn: true, status: '22°C', room: 'Çalışma Odası' },
-    ],
-  },
-];
-
-// Flatten all devices
-const allDevices = roomsData.slice(1).flatMap((room) => room.devices);
-roomsData[0].devices = allDevices;
-
 export default function RoomsDevicesScreen() {
   const { colors, isDark, shadows } = useTheme();
-  const [selectedRoom, setSelectedRoom] = useState('all');
+  const [selectedRoom, setSelectedRoom] = useState<number>(0);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
-  const currentRoom = roomsData.find((r) => r.id === selectedRoom);
-  const devices = currentRoom?.devices || [];
+  // Get real data
+  const { devices, isLoading, rooms: apiRooms } = useAllDevices();
+  const { data: cloudRooms = [] } = useRooms();
+
+  // Combine rooms
+  const rooms = [
+    { id: 0, name: 'Tümü', icon: 'apps-outline' as const },
+    ...cloudRooms.map(r => ({ 
+      id: r.id, 
+      name: r.name, 
+      icon: (r.icon || 'cube-outline') as keyof typeof Ionicons.glyphMap 
+    })),
+  ];
+
+  // If no cloud rooms, add default ones
+  if (cloudRooms.length === 0) {
+    rooms.push(
+      { id: 1, name: 'Salon', icon: 'tv-outline' },
+      { id: 2, name: 'Yatak Odası', icon: 'bed-outline' },
+      { id: 3, name: 'Mutfak', icon: 'restaurant-outline' },
+    );
+  }
+
+  // Filter devices by room
+  const filteredDevices = selectedRoom === 0 
+    ? devices 
+    : devices.filter(d => d.roomId === selectedRoom);
 
   const handleBack = () => {
     router.back();
   };
 
-  const getDeviceIcon = (type: Device['type']): keyof typeof Ionicons.glyphMap => {
-    switch (type) {
-      case 'tv':
-        return 'tv';
-      case 'light':
-        return 'bulb';
-      case 'ac':
-        return 'snow';
-      case 'speaker':
-        return 'volume-high';
-      case 'camera':
-        return 'videocam';
-      default:
-        return 'hardware-chip';
-    }
+  const handleDevicePress = (device: TvDevice) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    router.push({ pathname: '/tv-remote', params: { deviceId: device.id } });
   };
 
-  const toggleDevice = (device: Device) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    // Toggle logic here
+  const getDeviceIcon = (brand: string): keyof typeof Ionicons.glyphMap => {
+    switch (brand) {
+      case 'samsung':
+      case 'lg':
+      case 'roku':
+      case 'android':
+        return 'tv';
+      default:
+        return 'tv-outline';
+    }
   };
 
   return (
@@ -164,18 +123,28 @@ export default function RoomsDevicesScreen() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.roomsContent}
         >
-          {roomsData.map((room) => (
+          {rooms.map((room) => (
             <RoomChip
               key={room.id}
               name={room.name}
               icon={room.icon}
               isSelected={selectedRoom === room.id}
               onPress={() => setSelectedRoom(room.id)}
-              deviceCount={room.devices.length}
+              deviceCount={room.id === 0 ? devices.length : devices.filter(d => d.roomId === room.id).length}
             />
           ))}
         </ScrollView>
       </Animated.View>
+
+      {/* Loading State */}
+      {isLoading && devices.length === 0 && (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={Colors.primary} />
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+            Cihazlar yükleniyor...
+          </Text>
+        </View>
+      )}
 
       {/* Devices */}
       <ScrollView
@@ -183,9 +152,21 @@ export default function RoomsDevicesScreen() {
         contentContainerStyle={styles.devicesContent}
         showsVerticalScrollIndicator={false}
       >
-        {viewMode === 'grid' ? (
+        {filteredDevices.length === 0 && !isLoading ? (
+          <View style={styles.emptyState}>
+            <Ionicons name="tv-outline" size={64} color={colors.textTertiary} />
+            <Text style={[styles.emptyTitle, { color: colors.text }]}>
+              Cihaz Bulunamadı
+            </Text>
+            <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+              {selectedRoom === 0 
+                ? 'Henüz hiç cihaz eklenmemiş'
+                : 'Bu odada cihaz yok'}
+            </Text>
+          </View>
+        ) : viewMode === 'grid' ? (
           <View style={styles.devicesGrid}>
-            {devices.map((device, index) => (
+            {filteredDevices.map((device, index) => (
               <Animated.View
                 key={device.id}
                 entering={FadeInUp.delay(100 + index * 50).duration(400)}
@@ -195,7 +176,7 @@ export default function RoomsDevicesScreen() {
                   device={device}
                   colors={colors}
                   shadows={shadows}
-                  onPress={() => toggleDevice(device)}
+                  onPress={() => handleDevicePress(device)}
                   getIcon={getDeviceIcon}
                 />
               </Animated.View>
@@ -203,7 +184,7 @@ export default function RoomsDevicesScreen() {
           </View>
         ) : (
           <View style={styles.devicesList}>
-            {devices.map((device, index) => (
+            {filteredDevices.map((device, index) => (
               <Animated.View
                 key={device.id}
                 entering={FadeInUp.delay(100 + index * 50).duration(400)}
@@ -213,7 +194,7 @@ export default function RoomsDevicesScreen() {
                   device={device}
                   colors={colors}
                   shadows={shadows}
-                  onPress={() => toggleDevice(device)}
+                  onPress={() => handleDevicePress(device)}
                   getIcon={getDeviceIcon}
                 />
               </Animated.View>
@@ -232,7 +213,7 @@ export default function RoomsDevicesScreen() {
           >
             <Ionicons name="add-circle-outline" size={32} color={Colors.primary} />
             <Text style={[styles.addDeviceText, { color: colors.text }]}>
-              Yeni Cihaz Ekle
+              Yeni TV Ekle
             </Text>
           </Pressable>
         </Animated.View>
@@ -243,21 +224,24 @@ export default function RoomsDevicesScreen() {
 
 // Device Grid Card
 interface DeviceCardProps {
-  device: Device;
+  device: TvDevice;
   colors: typeof Colors.light;
   shadows: any;
   onPress: () => void;
-  getIcon: (type: Device['type']) => keyof typeof Ionicons.glyphMap;
+  getIcon: (brand: string) => keyof typeof Ionicons.glyphMap;
 }
 
 function DeviceGridCard({ device, colors, shadows, onPress, getIcon }: DeviceCardProps) {
+  const isOn = device.powerState === 'on';
+  const isOnline = device.connectionStatus === 'online';
+
   return (
     <Pressable onPress={onPress}>
       <View
         style={[
           styles.gridCard,
           {
-            backgroundColor: device.isOn ? Colors.primary + '15' : colors.card,
+            backgroundColor: isOn ? Colors.primary + '15' : colors.card,
           },
           shadows.small,
         ]}
@@ -267,21 +251,23 @@ function DeviceGridCard({ device, colors, shadows, onPress, getIcon }: DeviceCar
             style={[
               styles.deviceIcon,
               {
-                backgroundColor: device.isOn ? Colors.primary : colors.border,
+                backgroundColor: isOn ? Colors.primary : colors.border,
               },
             ]}
           >
             <Ionicons
-              name={getIcon(device.type)}
+              name={getIcon(device.brand)}
               size={24}
-              color={device.isOn ? '#FFFFFF' : colors.textTertiary}
+              color={isOn ? '#FFFFFF' : colors.textTertiary}
             />
           </View>
           <View
             style={[
               styles.statusIndicator,
               {
-                backgroundColor: device.isOn ? Colors.success : colors.textTertiary,
+                backgroundColor: isOnline 
+                  ? (isOn ? Colors.success : Colors.warning) 
+                  : colors.textTertiary,
               },
             ]}
           />
@@ -290,10 +276,10 @@ function DeviceGridCard({ device, colors, shadows, onPress, getIcon }: DeviceCar
           {device.name}
         </Text>
         <Text style={[styles.gridCardStatus, { color: colors.textSecondary }]}>
-          {device.status || (device.isOn ? 'Açık' : 'Kapalı')}
+          {isOnline ? (isOn ? 'Açık' : 'Kapalı') : 'Çevrimdışı'}
         </Text>
         <Text style={[styles.gridCardRoom, { color: colors.textTertiary }]}>
-          {device.room}
+          {device.roomName || device.brand}
         </Text>
       </View>
     </Pressable>
@@ -301,6 +287,9 @@ function DeviceGridCard({ device, colors, shadows, onPress, getIcon }: DeviceCar
 }
 
 function DeviceListCard({ device, colors, shadows, onPress, getIcon }: DeviceCardProps) {
+  const isOn = device.powerState === 'on';
+  const isOnline = device.connectionStatus === 'online';
+
   return (
     <Pressable onPress={onPress}>
       <View style={[styles.listCard, { backgroundColor: colors.card }, shadows.small]}>
@@ -308,14 +297,14 @@ function DeviceListCard({ device, colors, shadows, onPress, getIcon }: DeviceCar
           style={[
             styles.listDeviceIcon,
             {
-              backgroundColor: device.isOn ? Colors.primary + '15' : colors.border,
+              backgroundColor: isOn ? Colors.primary + '15' : colors.border,
             },
           ]}
         >
           <Ionicons
-            name={getIcon(device.type)}
+            name={getIcon(device.brand)}
             size={24}
-            color={device.isOn ? Colors.primary : colors.textTertiary}
+            color={isOn ? Colors.primary : colors.textTertiary}
           />
         </View>
         <View style={styles.listCardContent}>
@@ -323,14 +312,16 @@ function DeviceListCard({ device, colors, shadows, onPress, getIcon }: DeviceCar
             {device.name}
           </Text>
           <Text style={[styles.listCardRoom, { color: colors.textSecondary }]}>
-            {device.room} • {device.status || (device.isOn ? 'Açık' : 'Kapalı')}
+            {device.roomName || device.brand} • {isOnline ? (isOn ? 'Açık' : 'Kapalı') : 'Çevrimdışı'}
           </Text>
         </View>
         <View
           style={[
             styles.listStatusIndicator,
             {
-              backgroundColor: device.isOn ? Colors.success : colors.textTertiary,
+              backgroundColor: isOnline 
+                ? (isOn ? Colors.success : Colors.warning) 
+                : colors.textTertiary,
             },
           ]}
         />
@@ -371,6 +362,30 @@ const styles = StyleSheet.create({
   },
   roomsContent: {
     paddingHorizontal: Spacing.lg,
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.xl,
+  },
+  loadingText: {
+    ...Typography.bodyMedium,
+    marginTop: Spacing.md,
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.xl * 2,
+  },
+  emptyTitle: {
+    ...Typography.titleMedium,
+    marginTop: Spacing.lg,
+    marginBottom: Spacing.xs,
+  },
+  emptySubtitle: {
+    ...Typography.bodyMedium,
+    textAlign: 'center',
   },
   devicesContainer: {
     flex: 1,
@@ -468,4 +483,3 @@ const styles = StyleSheet.create({
     ...Typography.labelLarge,
   },
 });
-
